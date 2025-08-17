@@ -980,32 +980,81 @@ class IOSoccerBot {
         
         await interaction.reply({ embeds: [loadingEmbed] });
         
-        // Obtener información de todos los servidores con PERSISTENCIA TOTAL
+        // Obtener información de todos los servidores con TIMEOUT GENERAL
         const serversInfo = [];
-        for (let i = 0; i < SERVERS.length; i++) {
-            const server = SERVERS[i];
-            
-            // Actualizar mensaje de progreso
-            const progressEmbed = new EmbedBuilder()
-                .setTitle('🔄 Consultando servidores...')
-                .setDescription(`Analizando ${server.name} (${i+1}/${SERVERS.length}) - MODO PERSISTENTE`)
-                .addFields({
-                    name: '📡 Progreso',
-                    value: '✅ '.repeat(i) + '🔄 ' + '⏳ '.repeat(SERVERS.length - i - 1),
-                    inline: false
-                })
-                .setColor(0xffff00);
-            
-            await interaction.editReply({ embeds: [progressEmbed] });
-            
-            const serverInfo = await getServerInfoRobust(server);
-            serversInfo.push(serverInfo);
-            
-            // Log del resultado para debugging
-            if (serverInfo.matchInfo) {
-                logger('INFO', `📊 ${server.name}: ${serverInfo.matchInfo.team_home} ${serverInfo.matchInfo.goals_home}-${serverInfo.matchInfo.goals_away} ${serverInfo.matchInfo.team_away} (${serverInfo.matchInfo.time_display}, ${serverInfo.matchInfo.period})`);
+        const maxTotalTime = 10 * 60 * 1000; // 10 minutos máximo total
+        const maxTimePerServer = 2 * 60 * 1000; // 2 minutos máximo por servidor
+        
+        const getAllServersInfo = async () => {
+            for (let i = 0; i < SERVERS.length; i++) {
+                const server = SERVERS[i];
+                
+                // Actualizar mensaje de progreso
+                const progressEmbed = new EmbedBuilder()
+                    .setTitle('🔄 Consultando servidores...')
+                    .setDescription(`Analizando ${server.name} (${i+1}/${SERVERS.length}) - MODO PERSISTENTE`)
+                    .addFields({
+                        name: '📡 Progreso',
+                        value: '✅ '.repeat(i) + '🔄 ' + '⏳ '.repeat(SERVERS.length - i - 1),
+                        inline: false
+                    })
+                    .setColor(0xffff00);
+                
+                try {
+                    await interaction.editReply({ embeds: [progressEmbed] });
+                } catch (e) {
+                    logger('WARNING', `⚠️ No se pudo actualizar progreso: ${e.message}`);
+                }
+                
+                // Timeout por servidor individual
+                try {
+                    const serverInfo = await Promise.race([
+                        getServerInfoRobust(server),
+                        new Promise((_, reject) => 
+                            setTimeout(() => reject(new Error(`Timeout de ${maxTimePerServer/1000}s alcanzado`)), maxTimePerServer)
+                        )
+                    ]);
+                    serversInfo.push(serverInfo);
+                    
+                    // Log del resultado para debugging
+                    if (serverInfo.matchInfo) {
+                        logger('INFO', `📊 ${server.name}: ${serverInfo.matchInfo.team_home} ${serverInfo.matchInfo.goals_home}-${serverInfo.matchInfo.goals_away} ${serverInfo.matchInfo.team_away} (${serverInfo.matchInfo.time_display}, ${serverInfo.matchInfo.period})`);
+                    } else {
+                        logger('INFO', `📊 ${server.name}: Sin match info, ${serverInfo.players}/${serverInfo.maxPlayers} jugadores`);
+                    }
+                } catch (serverError) {
+                    logger('ERROR', `❌ ${server.name} falló o timeout: ${serverError.message}`);
+                    // Crear ServerInfo de error para este servidor
+                    const { ServerInfo } = require('./monitoring/serverMonitoring');
+                    serversInfo.push(new ServerInfo(
+                        server.name,
+                        serverError.message.includes('Timeout') ? "🕐 Timeout" : "🔴 Error"
+                    ));
+                }
+            }
+        };
+        
+        try {
+            // Timeout general para todo el comando
+            await Promise.race([
+                getAllServersInfo(),
+                new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error(`Comando /status timeout después de ${maxTotalTime/1000/60} minutos`)), maxTotalTime)
+                )
+            ]);
+        } catch (globalError) {
+            if (globalError.message.includes('timeout')) {
+                logger('ERROR', `❌ TIMEOUT GLOBAL del comando /status: ${globalError.message}`);
+                
+                // Si hay timeout global, mostrar lo que tengamos hasta ahora
+                const timeoutEmbed = new EmbedBuilder()
+                    .setTitle('⏰ Timeout Global')
+                    .setDescription(`El comando /status tardó demasiado. Mostrando información parcial de ${serversInfo.length}/${SERVERS.length} servidores.`)
+                    .setColor(0xff9900);
+                
+                await interaction.editReply({ embeds: [timeoutEmbed] });
             } else {
-                logger('INFO', `📊 ${server.name}: Sin match info, ${serverInfo.players}/${serverInfo.maxPlayers} jugadores`);
+                throw globalError;
             }
         }
         
