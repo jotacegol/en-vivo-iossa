@@ -122,7 +122,7 @@ class RCONManager {
      * @param {number|null} maxAttempts - Número máximo de intentos (null = ilimitado)
      * @returns {Promise<Object>} Resultado de la prueba
      */
-    static async testConnectionPersistent(ip, port, password, maxAttempts = null) {
+    static async testConnectionPersistent(ip, port, password, maxAttempts = 20) {
         let lastError = null;
         let attempt = 0;
         const startTime = Date.now();
@@ -206,7 +206,7 @@ class RCONManager {
      * @param {number|null} maxAttempts - Número máximo de intentos (null = ilimitado)
      * @returns {Promise<Object>} Resultado del comando
      */
-    static async executeCommandPersistent(ip, port, password, command, maxAttempts = null) {
+    static async executeCommandPersistent(ip, port, password, command, maxAttempts = 15) {
         let lastError = null;
         let attempt = 0;
         const startTime = Date.now();
@@ -326,14 +326,19 @@ class RCONManager {
         const startTime = Date.now();
         
         // ESTRATEGIA: Intentar cada puerto de forma persistente hasta que UNO funcione
-        while (true) { // Loop infinito hasta encontrar un puerto funcional
+        let globalAttempts = 0;
+        const maxGlobalAttempts = 100; // Máximo 100 intentos globales para evitar bucles infinitos
+        
+        while (globalAttempts < maxGlobalAttempts) { // Loop con límite global
             for (const port of allowedPorts) {
                 logger('INFO', `🔐 Probando puerto persistente: ${port}`);
                 
-                // Intentar este puerto de forma persistente (máximo 50 intentos por puerto por ronda)
+                // Intentar este puerto de forma persistente (máximo 10 intentos por puerto por ronda)
                 const testResult = await this.testConnectionPersistent(
-                    server.ip, port, password, 50  // Aumentado de 10 a 50 intentos por puerto
+                    server.ip, port, password, 10  // 10 intentos por puerto por ronda
                 );
+                
+                globalAttempts += testResult.attempts || 0;
                 
                 // Registrar intentos
                 if (!attemptsLog[port]) {
@@ -360,8 +365,14 @@ class RCONManager {
             }
             
             // Si llegamos aquí, ningún puerto funcionó en esta ronda
-            logger('WARNING', `⚠️ Ningún puerto funcionó en esta ronda. Esperando 30s antes de intentar todos de nuevo...`);
-            await new Promise(resolve => setTimeout(resolve, 30000)); // Espera larga antes de reintentar todos los puertos
+            const timeRemaining = maxGlobalAttempts - globalAttempts;
+            if (timeRemaining <= 0) {
+                logger('ERROR', `❌ Límite global de intentos alcanzado (${maxGlobalAttempts}). Deteniendo búsqueda.`);
+                break;
+            }
+            
+            logger('WARNING', `⚠️ Ningún puerto funcionó en esta ronda. Esperando 15s antes de intentar de nuevo... (${timeRemaining} intentos restantes)`);
+            await new Promise(resolve => setTimeout(resolve, 15000)); // Reducido de 30s a 15s
         }
     }
     
@@ -392,9 +403,9 @@ class RCONManager {
         const workingPort = portResult.port;
         logger('INFO', `🔐 Usando puerto persistente ${workingPort} para match info`);
         
-        // 2. Ejecutar sv_matchinfojson de forma persistente (sin límite de intentos)
+        // 2. Ejecutar sv_matchinfojson de forma persistente (máximo 20 intentos)
         const result = await this.executeCommandPersistent(
-            server.ip, workingPort, password, 'sv_matchinfojson', null
+            server.ip, workingPort, password, 'sv_matchinfojson', 20
         );
         
         if (!result.success || !result.response) {
