@@ -341,22 +341,24 @@ function createMatchEmbedImproved(serverInfo) {
     const homeGoals = matchInfo.goals_detail ? matchInfo.goals_detail.filter(goal => goal.team === 'home') : [];
     const awayGoals = matchInfo.goals_detail ? matchInfo.goals_detail.filter(goal => goal.team === 'away') : [];
     
-    // Goles equipo local
+    // Goles equipo local - separar reales de genéricos
+    const realHomeGoals = homeGoals.filter(goal => goal.is_real !== false);
+    const genericHomeGoals = homeGoals.filter(goal => goal.is_real === false);
+    
     let homeGoalsText = "";
-    if (homeGoals.length > 0) {
-        for (const goal of homeGoals) {
-            const assistText = goal.assist_name ? ` (${goal.assist_name})` : "";
-            homeGoalsText += `⚽ **${goal.minute}** ${goal.scorer_name}${assistText}\n`;
-        }
+    
+    // Mostrar goles reales primero
+    for (const goal of realHomeGoals) {
+        const assistText = goal.assist_name ? ` (${goal.assist_name})` : "";
+        homeGoalsText += `⚽ **${goal.minute}** ${goal.scorer_name}${assistText}\n`;
     }
     
-    // Si faltan goles, indicarlo claramente
-    if (homeGoals.length < matchInfo.goals_home) {
-        const missingCount = matchInfo.goals_home - homeGoals.length;
-        if (homeGoalsText) {
-            homeGoalsText += `⚠️ *${missingCount} gol${missingCount > 1 ? 'es' : ''} más (datos no disponibles)*`;
+    // Mostrar goles genéricos de forma compacta
+    if (genericHomeGoals.length > 0) {
+        if (realHomeGoals.length > 0) {
+            homeGoalsText += `⚠️ *${genericHomeGoals.length} gol${genericHomeGoals.length > 1 ? 'es' : ''} más (datos no disponibles)*`;
         } else {
-            homeGoalsText = `⚠️ *${matchInfo.goals_home} gol${matchInfo.goals_home > 1 ? 'es' : ''} (datos no disponibles)*`;
+            homeGoalsText = `⚠️ *${genericHomeGoals.length} gol${genericHomeGoals.length > 1 ? 'es' : ''} (datos no disponibles)*`;
         }
     }
     
@@ -370,22 +372,24 @@ function createMatchEmbedImproved(serverInfo) {
         inline: true
     });
     
-    // Goles equipo visitante
+    // Goles equipo visitante - separar reales de genéricos
+    const realAwayGoals = awayGoals.filter(goal => goal.is_real !== false);
+    const genericAwayGoals = awayGoals.filter(goal => goal.is_real === false);
+    
     let awayGoalsText = "";
-    if (awayGoals.length > 0) {
-        for (const goal of awayGoals) {
-            const assistText = goal.assist_name ? ` (${goal.assist_name})` : "";
-            awayGoalsText += `⚽ **${goal.minute}** ${goal.scorer_name}${assistText}\n`;
-        }
+    
+    // Mostrar goles reales primero
+    for (const goal of realAwayGoals) {
+        const assistText = goal.assist_name ? ` (${goal.assist_name})` : "";
+        awayGoalsText += `⚽ **${goal.minute}** ${goal.scorer_name}${assistText}\n`;
     }
     
-    // Si faltan goles, indicarlo claramente
-    if (awayGoals.length < matchInfo.goals_away) {
-        const missingCount = matchInfo.goals_away - awayGoals.length;
-        if (awayGoalsText) {
-            awayGoalsText += `⚠️ *${missingCount} gol${missingCount > 1 ? 'es' : ''} más (datos no disponibles)*`;
+    // Mostrar goles genéricos de forma compacta
+    if (genericAwayGoals.length > 0) {
+        if (realAwayGoals.length > 0) {
+            awayGoalsText += `⚠️ *${genericAwayGoals.length} gol${genericAwayGoals.length > 1 ? 'es' : ''} más (datos no disponibles)*`;
         } else {
-            awayGoalsText = `⚠️ *${matchInfo.goals_away} gol${matchInfo.goals_away > 1 ? 'es' : ''} (datos no disponibles)*`;
+            awayGoalsText = `⚠️ *${genericAwayGoals.length} gol${genericAwayGoals.length > 1 ? 'es' : ''} (datos no disponibles)*`;
         }
     }
     
@@ -402,14 +406,17 @@ function createMatchEmbedImproved(serverInfo) {
     // Espacio para nueva línea
     embed.addFields({ name: "\u200b", value: "\u200b", inline: true });
     
-    // Goleadores SOLO basado en los datos disponibles
-    if (homeGoals.length > 0 || awayGoals.length > 0) {
-        const allGoals = [...homeGoals, ...awayGoals];
+    // Goleadores SOLO basado en los datos reales (excluir genéricos)
+    const realGoals = [...homeGoals, ...awayGoals].filter(goal => goal.is_real !== false);
+    
+    if (realGoals.length > 0) {
         const scorerCount = {};
         
-        for (const goal of allGoals) {
+        for (const goal of realGoals) {
             const scorer = goal.scorer_name;
-            scorerCount[scorer] = (scorerCount[scorer] || 0) + 1;
+            if (scorer !== "Jugador desconocido") { // Excluir goles genéricos
+                scorerCount[scorer] = (scorerCount[scorer] || 0) + 1;
+            }
         }
         
         if (Object.keys(scorerCount).length > 0) {
@@ -424,12 +431,10 @@ function createMatchEmbedImproved(serverInfo) {
                 scorersText += `${medal} **${playerName}** (${goalCount} ${plural})\n`;
             }
             
-            // Si hay goles sin datos, indicarlo
-            const totalGoalsWithData = homeGoals.length + awayGoals.length;
-            const totalGoalsInMatch = matchInfo.goals_home + matchInfo.goals_away;
-            if (totalGoalsWithData < totalGoalsInMatch) {
-                const missingTotal = totalGoalsInMatch - totalGoalsWithData;
-                scorersText += `\n⚠️ *${missingTotal} gol${missingTotal > 1 ? 'es' : ''} sin datos detallados*`;
+            // Indicar goles sin datos detallados
+            const genericGoalsCount = [...homeGoals, ...awayGoals].filter(goal => goal.is_real === false).length;
+            if (genericGoalsCount > 0) {
+                scorersText += `\n⚠️ *${genericGoalsCount} gol${genericGoalsCount > 1 ? 'es' : ''} sin datos detallados*`;
             }
             
             embed.addFields({
@@ -438,6 +443,14 @@ function createMatchEmbedImproved(serverInfo) {
                 inline: false
             });
         }
+    } else if ((homeGoals.length + awayGoals.length) > 0) {
+        // Solo hay goles genéricos
+        const totalGenericGoals = homeGoals.length + awayGoals.length;
+        embed.addFields({
+            name: "🏆 Goleadores",
+            value: `⚠️ *${totalGenericGoals} gol${totalGenericGoals > 1 ? 'es' : ''} registrados sin datos de goleadores*`,
+            inline: false
+        });
     }
     
     // Footer
