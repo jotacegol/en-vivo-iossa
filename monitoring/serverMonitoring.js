@@ -105,7 +105,7 @@ async function getServerInfoRobust(server) {
             try {
                 const rconPassword = server.rcon_password || RCON_PASSWORD;
                 const testResult = await RCONManager.testConnectionPersistent(
-                    server.ip, server.rcon_ports[0], rconPassword, null  // Cambiado a intentos ilimitados
+                    server.ip, server.rcon_ports[0], rconPassword, 10  // Máximo 10 intentos por servidor offline
                 );
                 
                 if (testResult.success) {
@@ -138,7 +138,7 @@ async function getServerInfoRobust(server) {
                     // Intentar comando básico para confirmar servidor online
                     try {
                         const basicResult = await RCONManager.executeCommandPersistent(
-                            server.ip, server.rcon_ports[0], rconPassword, 'status', null
+                            server.ip, server.rcon_ports[0], rconPassword, 'status', 5
                         );
                         
                         if (basicResult.success) {
