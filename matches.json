@@ -1,0 +1,24 @@
+[
+  {
+    "id": 1755377252174,
+    "equipo1": "D7",
+    "equipo2": "AiM",
+    "torneo": "Liga D1",
+    "date": "2025-08-17",
+    "time": "21:00",
+    "displayDate": "Domingo 17/08",
+    "confirmedBy": "438147217702780939",
+    "confirmedAt": "2025-08-16T20:47:32.174Z"
+  },
+  {
+    "id": 1755380014025,
+    "equipo1": "D7",
+    "equipo2": "AiM",
+    "torneo": "Liga D1",
+    "date": "2025-08-19",
+    "time": "22:00",
+    "displayDate": "Martes 19/08",
+    "confirmedBy": "438147217702780939",
+    "confirmedAt": "2025-08-16T21:33:34.025Z"
+  }
+]
