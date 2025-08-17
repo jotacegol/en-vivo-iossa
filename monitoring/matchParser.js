@@ -400,12 +400,37 @@ function parseMatchInfo(matchData) {
         const detailedHomeGoals = goalsDetail.filter(g => g.team === 'home').length;
         const detailedAwayGoals = goalsDetail.filter(g => g.team === 'away').length;
         
+        // CREAR GOLES GENÉRICOS PARA LOS FALTANTES
         if (detailedHomeGoals < goalsHome) {
-            console.log(`⚠️ ADVERTENCIA: JSON truncado - Equipo local tiene ${goalsHome} goles pero solo ${detailedHomeGoals} eventos de gol`);
+            const missingHomeGoals = goalsHome - detailedHomeGoals;
+            console.log(`⚠️ ADVERTENCIA: JSON truncado - Equipo local tiene ${goalsHome} goles pero solo ${detailedHomeGoals} eventos de gol. Creando ${missingHomeGoals} goles genéricos.`);
+            
+            for (let i = 0; i < missingHomeGoals; i++) {
+                goalsDetail.push({
+                    minute: "?:??",
+                    team: "home",
+                    scorer_name: "Jugador desconocido",
+                    assist_name: "",
+                    period: periodName,
+                    is_real: false  // Marcar como gol genérico
+                });
+            }
         }
         
         if (detailedAwayGoals < goalsAway) {
-            console.log(`⚠️ ADVERTENCIA: JSON truncado - Equipo visitante tiene ${goalsAway} goles pero solo ${detailedAwayGoals} eventos de gol`);
+            const missingAwayGoals = goalsAway - detailedAwayGoals;
+            console.log(`⚠️ ADVERTENCIA: JSON truncado - Equipo visitante tiene ${goalsAway} goles pero solo ${detailedAwayGoals} eventos de gol. Creando ${missingAwayGoals} goles genéricos.`);
+            
+            for (let i = 0; i < missingAwayGoals; i++) {
+                goalsDetail.push({
+                    minute: "?:??",
+                    team: "away",
+                    scorer_name: "Jugador desconocido",
+                    assist_name: "",
+                    period: periodName,
+                    is_real: false  // Marcar como gol genérico
+                });
+            }
         }
         
         console.log(`✅ Parseado exitoso: ${teamHomeName} ${goalsHome}-${goalsAway} ${teamAwayName} (${timeDisplay}, ${periodName})`);
