@@ -490,6 +490,22 @@ class RCONManager {
                         repairAttempts++;
                         logger('INFO', `🔧 Intento ${repairAttempts}: Cortado en coma`);
                     }
+                    // ESTRATEGIA 2.1: Cortado en string incompleto con comillas
+                    else if (missingBraces >= 1 && repairedJson.match(/"[^"]*$/)) {
+                        // Buscar la última comilla no cerrada y cerrarla
+                        const lastQuoteIndex = repairedJson.lastIndexOf('"');
+                        const beforeQuote = repairedJson.substring(0, lastQuoteIndex + 1);
+                        repairedJson = beforeQuote + '"';
+                        // Cerrar arrays y objetos faltantes
+                        for (let i = 0; i < missingBrackets; i++) {
+                            repairedJson += ']';
+                        }
+                        for (let i = 0; i < missingBraces; i++) {
+                            repairedJson += '}';
+                        }
+                        repairAttempts++;
+                        logger('INFO', `🔧 Intento ${repairAttempts}: String cortado con comillas`);
+                    }
                     // ESTRATEGIA 3: Cortado en string - termina con comillas
                     else if (missingBraces >= 1 && repairedJson.endsWith('"')) {
                         // Cerrar arrays y objetos faltantes
