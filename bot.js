@@ -7,18 +7,32 @@ const http = require('http');
 // Cargar variables de entorno
 dotenv.config();
 
+// ============= LOGGER SEGURO =============
+const createSafeLogger = () => {
+    return (level, message) => {
+        const timestamp = new Date().toISOString();
+        console.log(`[${timestamp}] [${level}] ${message}`);
+    };
+};
+
+// Logger por defecto seguro
+let logger = createSafeLogger();
+
 // ============= SISTEMA DE MONITOREO ULTRA-ROBUSTO =============
-let monitoring, initialize, getStats, logger;
+let monitoring, initialize, getStats;
 
 try {
     const monitoringSystem = require('./monitoring');
     monitoring = monitoringSystem.monitoring;
     initialize = monitoringSystem.initialize;
     getStats = monitoringSystem.getStats;
-    logger = monitoringSystem.logger;
+    if (monitoringSystem.logger) {
+        logger = monitoringSystem.logger;
+    }
     console.log('✅ Sistema de monitoreo ultra-robusto cargado exitosamente');
 } catch (error) {
-    console.log('⚠️  Sistema de monitoreo no disponible, usando sistema básico:', error.message);
+    console.log('⚠️ Sistema de monitoreo no disponible, usando sistema básico:', error.message);
+    
     // Fallback al sistema básico
     try {
         const basicMonitoring = require('./monitoring/serverMonitoring');
@@ -42,7 +56,6 @@ try {
                 };
             },
             queryMatchInfo: async (server, password) => {
-                // Implementación básica para match info
                 return {
                     success: false,
                     error: { user: { message: 'Match info no disponible en modo básico' } }
@@ -53,29 +66,55 @@ try {
                     basic: { healthy: true, details: 'Sistema básico activo' }
                 };
             },
-            shutdown: async () => { console.log('Sistema básico cerrado'); }
+            shutdown: async () => { 
+                console.log('Sistema básico cerrado'); 
+            }
         };
         
-        initialize = async () => { console.log('Sistema básico inicializado'); };
+        initialize = async () => { 
+            console.log('Sistema básico inicializado'); 
+        };
+        
         getStats = () => ({ 
             uptime: process.uptime(), 
             memory: process.memoryUsage(), 
             systemHealth: { basic: true },
             cache: { totalEntries: 0, hitRate: 0 }
         });
-        logger = basicLogger.logger;
+        
+        if (basicLogger && basicLogger.logger) {
+            logger = basicLogger.logger;
+        }
+        
     } catch (fallbackError) {
         console.error('❌ Error cargando sistema básico:', fallbackError.message);
-        // Logger mínimo de emergencia
-        logger = (level, msg) => console.log(`[${level}] ${msg}`);
-        monitoring = { queryServerInfo: async () => ({ success: false, error: { user: { message: 'Sistema no disponible' } } }) };
+        
+        // Sistema mínimo de emergencia
+        monitoring = { 
+            queryServerInfo: async () => ({ 
+                success: false, 
+                error: { user: { message: 'Sistema no disponible' } } 
+            }),
+            queryMatchInfo: async () => ({ 
+                success: false, 
+                error: { user: { message: 'Sistema no disponible' } } 
+            }),
+            runIntegrityCheck: async () => ({
+                basic: { healthy: false, details: 'Sistema no disponible' }
+            }),
+            shutdown: async () => {}
+        };
         initialize = async () => {};
-        getStats = () => ({ uptime: process.uptime(), memory: process.memoryUsage(), systemHealth: {}, cache: {} });
+        getStats = () => ({ 
+            uptime: process.uptime(), 
+            memory: process.memoryUsage(), 
+            systemHealth: {},
+            cache: {} 
+        });
     }
 }
 
 // ============= CONFIGURACIÓN ADAPTABLE =============
-// Configuración desde variables de entorno (Railway) o archivo local
 const CONFIG = {
     discord: {
         token: process.env.DISCORD_TOKEN,
@@ -94,7 +133,6 @@ const CONFIG = {
             matchJson: parseInt(process.env.TIMEOUT_MATCH_JSON) || 60000
         }
     },
-    // Para Railway: Cargar servidores desde variables de entorno
     loadServersFromEnv: function() {
         const servers = [];
         let i = 1;
@@ -108,12 +146,11 @@ const CONFIG = {
                 rcon_ports: []
             };
             
-            // Cargar puertos RCON
             const rconPorts = process.env[`SERVER_${i}_RCON_PORTS`];
             if (rconPorts) {
                 server.rcon_ports = rconPorts.split(',').map(p => parseInt(p.trim()));
             } else {
-                server.rcon_ports = [server.port, server.port + 1, server.port + 2];
+                server.rcon_ports = [server.port];
             }
             
             servers.push(server);
@@ -124,32 +161,71 @@ const CONFIG = {
     }
 };
 
-// Cargar servidores desde env si existen, sino usar configuración básica
+// Cargar servidores
 CONFIG.servers = CONFIG.loadServersFromEnv();
 if (CONFIG.servers.length === 0) {
-    // Fallback a configuración básica local (para desarrollo)
     try {
         const basicConfig = require('./monitoring/serverMonitoring');
         CONFIG.servers = basicConfig.SERVERS || [];
-        console.log(`📡 Usando configuración local: ${CONFIG.servers.length} servidores`);
+        console.log(`🔡 Usando configuración local: ${CONFIG.servers.length} servidores`);
     } catch (e) {
-        console.log('⚠️  No se encontró configuración de servidores');
+        console.log('⚠️ No se encontró configuración de servidores');
+        CONFIG.servers = [];
     }
+}
+
+// Importar funciones necesarias solo si están disponibles
+let getServerInfoRobust, createMatchEmbedImproved, createStatusEmbed;
+
+try {
+    if (CONFIG.servers.length > 0) {
+        const serverMonitoring = require('./monitoring/serverMonitoring');
+        getServerInfoRobust = serverMonitoring.getServerInfoRobust;
+        createMatchEmbedImproved = serverMonitoring.createMatchEmbedImproved;
+        createStatusEmbed = serverMonitoring.createStatusEmbed;
+    }
+} catch (e) {
+    logger('WARNING', `No se pudieron cargar funciones de monitoreo: ${e.message}`);
+    
+    // Funciones de fallback
+    getServerInfoRobust = async (server) => {
+        return {
+            name: server.name,
+            status: "🔴 No disponible",
+            players: 0,
+            maxPlayers: 0,
+            mapName: "N/A",
+            matchInfo: null
+        };
+    };
+    
+    createMatchEmbedImproved = (serverInfo) => {
+        return new EmbedBuilder()
+            .setTitle(`🎮 ${serverInfo.name}`)
+            .setDescription('Sistema básico - información limitada')
+            .setColor('#ff9900');
+    };
+    
+    createStatusEmbed = (serversInfo) => {
+        return new EmbedBuilder()
+            .setTitle('⚽ Estado Servidores IOSoccer')
+            .setDescription('Sistema básico activo')
+            .setColor('#ff9900');
+    };
 }
 
 const CLIENT_ID = CONFIG.discord.clientId;
 
-// Configuración de roles permitidos (IDs de roles de Discord)
+// Configuración de roles y permisos
 const ALLOWED_ROLES = [
-    'ID_DEL_ROL_1', // Reemplaza con IDs reales de roles
-    'ID_DEL_ROL_2', // Ejemplo: '123456789012345678'
-    'ID_DEL_ROL_3'  // Puedes agregar más roles aquí
+    'ID_DEL_ROL_1',
+    'ID_DEL_ROL_2', 
+    'ID_DEL_ROL_3'
 ];
 
-// Configuración de permisos de administrador (IDs de usuarios)
 const ADMIN_USERS = [
-    'ID_USUARIO_ADMIN_1', // Reemplaza con IDs reales de usuarios admin
-    'ID_USUARIO_ADMIN_2'  // Estos usuarios pueden usar el bot sin rol específico
+    'ID_USUARIO_ADMIN_1',
+    'ID_USUARIO_ADMIN_2'
 ];
 
 class IOSoccerBot {
@@ -163,14 +239,12 @@ class IOSoccerBot {
             ]
         });
 
-        // Configuración del sistema
         this.timeSlots = [
             '21:00', '21:15', '21:30', '21:45',
             '22:00', '22:15', '22:30', '22:45',
             '23:00', '23:15', '23:30', '23:45'
         ];
 
-        // Mapeo de horarios a minutos para cálculos
         this.timeToMinutes = {
             '21:00': 1260, '21:15': 1275, '21:30': 1290, '21:45': 1305,
             '22:00': 1320, '22:15': 1335, '22:30': 1350, '22:45': 1365,
@@ -183,7 +257,6 @@ class IOSoccerBot {
             'Supercopa IOSSA', 'Supercopa de ORO'
         ];
 
-        // Mapeo de días de la semana
         this.dayNames = {
             'domingo': 0, 'lunes': 1, 'martes': 2, 'miercoles': 3, 'miércoles': 3,
             'jueves': 4, 'viernes': 5, 'sabado': 6, 'sábado': 6
@@ -194,21 +267,19 @@ class IOSoccerBot {
         this.dataFile = path.join(__dirname, 'matches.json');
         this.matches = this.loadMatches();
 
-        // ============= PROPIEDADES DE MONITOREO =============
-        this.activeStatusChannels = new Map(); // Para rastrear canales con auto-update activo
-        // Estructura: channelId -> { messages: [message_objects], intervals: [interval_objects] }
+        // Mapa para auto-update (corregido)
+        this.activeStatusChannels = new Map();
 
         this.init();
     }
 
     async init() {
-        // Inicializar sistema de monitoreo
         try {
             console.log('🚀 Inicializando sistema de monitoreo ultra-robusto...');
             await initialize(CONFIG.monitoring);
             console.log('✅ Sistema de monitoreo inicializado correctamente');
         } catch (error) {
-            console.error('⚠️  Error inicializando monitoreo:', error.message);
+            console.error('⚠️ Error inicializando monitoreo:', error.message);
         }
         
         this.client.once('ready', () => {
@@ -216,10 +287,8 @@ class IOSoccerBot {
             console.log(`📅 Sistema de confirmación de partidos: ACTIVO`);
             console.log(`📊 Sistema de monitoreo ultra-robusto: ACTIVO`);
             console.log(`🎮 Monitoreando ${CONFIG.servers.length} servidor(es) IOSoccer`);
-            console.log(`🔒 Control de roles: ACTIVO`);
             console.log('🛡️ Sistema ultra-robusto que nunca falla: ONLINE');
             
-            // Actualizar estado del bot
             const activity = CONFIG.servers.length > 0 
                 ? `${CONFIG.servers.length} servidores IOSoccer`
                 : 'IOSoccer Bot Ultra-Robusto';
@@ -231,7 +300,6 @@ class IOSoccerBot {
         this.client.on('interactionCreate', async (interaction) => {
             if (!interaction.isChatInputCommand()) return;
             
-            // Verificar permisos
             if (!this.hasPermission(interaction.member, interaction.user.id)) {
                 const embed = new EmbedBuilder()
                     .setColor('#e74c3c')
@@ -247,7 +315,6 @@ class IOSoccerBot {
         this.client.on('messageCreate', async (message) => {
             if (message.author.bot) return;
             
-            // Verificar permisos para comandos de texto
             if (message.content.startsWith('/confirmar_partido')) {
                 if (!this.hasPermission(message.member, message.author.id)) {
                     const embed = new EmbedBuilder()
@@ -263,28 +330,22 @@ class IOSoccerBot {
         });
 
         this.client.login(CONFIG.discord.token);
-        
-        // Para Railway: Crear servidor web para health checks
         this.createHealthServer();
     }
 
     hasPermission(member, userId) {
-        // Verificar si es admin
         if (ADMIN_USERS.includes(userId)) {
             return true;
         }
 
-        // Verificar si no hay miembro (DM)
         if (!member) {
             return false;
         }
 
-        // Verificar si tiene permisos de administrador del servidor
         if (member.permissions.has(PermissionFlagsBits.Administrator)) {
             return true;
         }
 
-        // Verificar roles específicos
         const hasRole = member.roles.cache.some(role => ALLOWED_ROLES.includes(role.id));
         return hasRole;
     }
@@ -368,7 +429,6 @@ class IOSoccerBot {
                 .setName('ayuda')
                 .setDescription('Muestra información de ayuda del bot'),
 
-            // ============= COMANDOS DE MONITOREO ULTRA-ROBUSTO =============
             new SlashCommandBuilder()
                 .setName('status')
                 .setDescription('🛡️ Estado ultra-robusto de todos los servidores IOSoccer')
@@ -418,7 +478,7 @@ class IOSoccerBot {
     }
 
     async handleSlashCommand(interaction) {
-        const { commandName, options } = interaction;
+        const { commandName } = interaction;
 
         try {
             switch (commandName) {
@@ -437,7 +497,6 @@ class IOSoccerBot {
                 case 'ayuda':
                     await this.showHelp(interaction);
                     break;
-                // ============= COMANDOS DE MONITOREO ULTRA-ROBUSTO =============
                 case 'status':
                     await this.serverStatus(interaction);
                     break;
@@ -458,14 +517,20 @@ class IOSoccerBot {
                     break;
             }
         } catch (error) {
-            console.error('Error en comando:', error);
-            await interaction.reply({
-                content: '❌ Ocurrió un error al procesar el comando.',
-                ephemeral: true
-            });
+            logger('ERROR', `Error en comando ${commandName}: ${error.message}`);
+            
+            const errorMessage = '❌ Ocurrió un error al procesar el comando.';
+            
+            if (interaction.deferred) {
+                await interaction.editReply({ content: errorMessage });
+            } else if (!interaction.replied) {
+                await interaction.reply({ content: errorMessage, ephemeral: true });
+            }
         }
     }
 
+    // ============= MÉTODOS DE PARTIDOS =============
+    
     async handleMessage(message) {
         if (!message.content.startsWith('/confirmar_partido')) return;
 
@@ -512,7 +577,7 @@ class IOSoccerBot {
                     { name: '🆚 Equipo Visitante', value: `**${result.match.equipo2}**`, inline: false },
                     { name: '🏆 Torneo', value: result.match.torneo, inline: false },
                     { name: '📅 Fecha', value: result.match.displayDate, inline: false },
-                    { name: '🕒 Hora', value: `${result.match.time}hs`, inline: false },
+                    { name: '🕐 Hora', value: `${result.match.time}hs`, inline: false },
                     { name: '🆔 ID del Partido', value: `\`${result.match.id}\``, inline: false },
                     { name: '👤 Confirmado por', value: username, inline: false }
                 )
@@ -528,11 +593,9 @@ class IOSoccerBot {
     }
 
     async processMatchConfirmation(equipo1, equipo2, torneo, dia, hora, userId) {
-        // Limpiar nombres de equipos (remover comillas si las hay)
         equipo1 = equipo1.replace(/['"]/g, '').trim();
         equipo2 = equipo2.replace(/['"]/g, '').trim();
 
-        // Validar torneo
         if (!this.validTournaments.includes(torneo)) {
             return {
                 success: false,
@@ -540,7 +603,6 @@ class IOSoccerBot {
             };
         }
 
-        // Validar hora
         if (!this.timeSlots.includes(hora)) {
             return {
                 success: false,
@@ -548,7 +610,6 @@ class IOSoccerBot {
             };
         }
 
-        // Procesar fecha
         const processedDate = this.processDate(dia);
         if (!processedDate.valid) {
             return {
@@ -557,7 +618,6 @@ class IOSoccerBot {
             };
         }
 
-        // Verificar disponibilidad de franja horaria
         const availability = this.checkTimeFrameAvailability(processedDate.date, hora);
         if (!availability.available) {
             return {
@@ -566,7 +626,6 @@ class IOSoccerBot {
             };
         }
 
-        // Crear partido
         const match = {
             id: Date.now(),
             equipo1,
@@ -597,24 +656,20 @@ class IOSoccerBot {
 
         if (inputLower === 'hoy') {
             targetDate = today;
-        } else if (inputLower === 'mañana' || inputLower === 'manaña') {
+        } else if (inputLower === 'mañana' || inputLower === 'manana') {
             targetDate = new Date(today);
             targetDate.setDate(today.getDate() + 1);
         } else if (this.dayNames.hasOwnProperty(inputLower)) {
-            // Procesamiento de días de la semana
             const targetDay = this.dayNames[inputLower];
             const currentDay = today.getDay();
             
             targetDate = new Date(today);
             
             if (targetDay === currentDay) {
-                // Si es el mismo día, se refiere a la próxima semana
                 targetDate.setDate(today.getDate() + 7);
             } else if (targetDay > currentDay) {
-                // Si el día objetivo está más adelante en la semana
                 targetDate.setDate(today.getDate() + (targetDay - currentDay));
             } else {
-                // Si el día objetivo ya pasó esta semana, ir a la próxima semana
                 targetDate.setDate(today.getDate() + (7 - currentDay + targetDay));
             }
         } else if (dateInput.match(/^\d{4}-\d{2}-\d{2}$/)) {
@@ -650,18 +705,15 @@ class IOSoccerBot {
     checkTimeFrameAvailability(date, time) {
         const targetMinutes = this.timeToMinutes[time];
         
-        // Obtener todos los partidos del día
         const dayMatches = this.matches.filter(match => match.date === date);
         
-        // Contar partidos en ventana de 45 minutos hacia atrás y hacia adelante
         const conflictingMatches = dayMatches.filter(match => {
             const matchMinutes = this.timeToMinutes[match.time];
             const timeDifference = Math.abs(targetMinutes - matchMinutes);
-            return timeDifference <= 45; // 45 minutos o menos de diferencia
+            return timeDifference <= 45;
         });
 
         if (conflictingMatches.length >= 3) {
-            // Ordenar partidos por hora para mejor presentación
             const sortedMatches = conflictingMatches.sort((a, b) => 
                 this.timeToMinutes[a.time] - this.timeToMinutes[b.time]
             );
@@ -669,7 +721,6 @@ class IOSoccerBot {
             const earliestTime = sortedMatches[0].time;
             const latestTime = sortedMatches[sortedMatches.length - 1].time;
             
-            // Calcular próximos horarios disponibles
             const availableSlots = this.findNextAvailableSlots(date, targetMinutes);
             
             return {
@@ -687,7 +738,6 @@ class IOSoccerBot {
         for (const slot of this.timeSlots) {
             const slotMinutes = this.timeToMinutes[slot];
             
-            // Contar partidos en ventana de 45 minutos para este slot
             const dayMatches = this.matches.filter(match => match.date === date);
             const conflicting = dayMatches.filter(match => {
                 const matchMinutes = this.timeToMinutes[match.time];
@@ -698,7 +748,7 @@ class IOSoccerBot {
                 availableSlots.push(slot);
             }
             
-            if (availableSlots.length >= 3) break; // Mostrar máximo 3 sugerencias
+            if (availableSlots.length >= 3) break;
         }
         
         return availableSlots.length > 0 ? availableSlots : ['No hay horarios disponibles para este día'];
@@ -723,7 +773,7 @@ class IOSoccerBot {
                     await this.showViewMatchesHelp(interaction);
             }
         } catch (error) {
-            console.error('Error en ver_partidos:', error);
+            logger('ERROR', `Error en ver_partidos: ${error.message}`);
             const embed = new EmbedBuilder()
                 .setColor('#e74c3c')
                 .setTitle('❌ Error')
@@ -763,7 +813,6 @@ class IOSoccerBot {
             return interaction.reply({ embeds: [embed] });
         }
 
-        // Ordenar partidos por fecha y hora
         const sortedMatches = this.matches.sort((a, b) => {
             const dateComparison = new Date(a.date) - new Date(b.date);
             if (dateComparison === 0) {
@@ -772,7 +821,6 @@ class IOSoccerBot {
             return dateComparison;
         });
 
-        // Agrupar por fecha
         const matchesByDate = {};
         sortedMatches.forEach(match => {
             if (!matchesByDate[match.date]) {
@@ -788,7 +836,6 @@ class IOSoccerBot {
             .setFooter({ text: `Sistema IOSoccer • ${new Date().toLocaleString('es-AR')}` })
             .setTimestamp();
 
-        // Limitar a las próximas 10 fechas para no sobrecargar el embed
         const dates = Object.keys(matchesByDate).slice(0, 10);
         
         dates.forEach(date => {
@@ -820,7 +867,6 @@ class IOSoccerBot {
     async viewDayOfWeek(interaction, dayInput) {
         const dayLower = dayInput.toLowerCase().trim();
         
-        // Normalizar día de entrada
         const normalizedDay = dayLower === 'miercoles' ? 'miércoles' : 
                               dayLower === 'sabado' ? 'sábado' : dayLower;
         
@@ -839,7 +885,6 @@ class IOSoccerBot {
         const targetDayNum = this.dayNames[normalizedDay];
         const dayDisplayName = this.dayNamesDisplay[targetDayNum];
 
-        // Buscar todos los partidos que caen en ese día de la semana
         const dayOfWeekMatches = this.matches.filter(match => {
             const matchDate = new Date(match.date + 'T00:00:00');
             return matchDate.getDay() === targetDayNum;
@@ -858,7 +903,6 @@ class IOSoccerBot {
                 value: `No hay partidos confirmados para ningún ${dayDisplayName}.\n\n💡 **Sugerencia:** Confirma algunos partidos para este día usando \`/confirmar_partido\`` 
             });
         } else {
-            // Ordenar por fecha y hora
             const sortedMatches = dayOfWeekMatches.sort((a, b) => {
                 const dateComparison = new Date(a.date) - new Date(b.date);
                 if (dateComparison === 0) {
@@ -867,7 +911,6 @@ class IOSoccerBot {
                 return dateComparison;
             });
 
-            // Agrupar por fecha específica
             const matchesBySpecificDate = {};
             sortedMatches.forEach(match => {
                 const displayDate = this.formatDisplayDate(match.date);
@@ -877,7 +920,6 @@ class IOSoccerBot {
                 matchesBySpecificDate[displayDate].push(match);
             });
 
-            // Mostrar cada fecha
             Object.entries(matchesBySpecificDate).forEach(([displayDate, matches]) => {
                 const matchList = matches.map(match => 
                     `• **${match.time}** - ${match.equipo1} vs ${match.equipo2}\n  🏆 ${match.torneo} • ID: \`${match.id}\``
@@ -890,7 +932,6 @@ class IOSoccerBot {
                 });
             });
 
-            // Estadísticas adicionales
             const tournamentCount = {};
             sortedMatches.forEach(match => {
                 tournamentCount[match.torneo] = (tournamentCount[match.torneo] || 0) + 1;
@@ -935,27 +976,6 @@ class IOSoccerBot {
         await interaction.reply({ embeds: [embed] });
     }
 
-    analyzeAvailability(date) {
-        const available = [];
-        
-        for (const slot of this.timeSlots) {
-            const slotMinutes = this.timeToMinutes[slot];
-            const dayMatches = this.matches.filter(match => match.date === date);
-            
-            const conflicting = dayMatches.filter(match => {
-                const matchMinutes = this.timeToMinutes[match.time];
-                return Math.abs(slotMinutes - matchMinutes) <= 45;
-            });
-            
-            if (conflicting.length < 3) {
-                const spotsLeft = 3 - conflicting.length;
-                available.push(`• **${slot}** - ${spotsLeft} lugares disponibles`);
-            }
-        }
-        
-        return available;
-    }
-
     async cancelMatch(interaction) {
         const matchId = interaction.options.getInteger('id');
         const matchIndex = this.matches.findIndex(match => match.id === matchId);
@@ -985,7 +1005,7 @@ class IOSoccerBot {
                 { name: '🆚 Equipo Visitante', value: match.equipo2, inline: false },
                 { name: '🏆 Torneo', value: match.torneo, inline: false },
                 { name: '📅 Fecha', value: match.displayDate, inline: false },
-                { name: '🕒 Hora', value: `${match.time}hs`, inline: false },
+                { name: '🕐 Hora', value: `${match.time}hs`, inline: false },
                 { name: '👤 Cancelado por', value: interaction.user.username, inline: false }
             )
             .setFooter({ text: `Sistema IOSoccer • ${new Date().toLocaleString('es-AR')}` })
@@ -999,13 +1019,11 @@ class IOSoccerBot {
         const today = new Date().toISOString().split('T')[0];
         const todayMatches = this.matches.filter(match => match.date === today).length;
 
-        // Estadísticas por torneo
         const tournamentStats = {};
         this.matches.forEach(match => {
             tournamentStats[match.torneo] = (tournamentStats[match.torneo] || 0) + 1;
         });
 
-        // Próximos partidos (próximos 7 días)
         const nextWeek = new Date();
         nextWeek.setDate(nextWeek.getDate() + 7);
         const upcomingMatches = this.matches.filter(match => {
@@ -1058,8 +1076,10 @@ class IOSoccerBot {
                     value: `
                     \`/status\` - Estado de todos los servidores IOSoccer
                       • **auto_update:** Activar actualización automática cada 90s
-                    \`/server\` - Información detallada de un servidor específico
-                      • **numero:** Seleccionar servidor (1 = ELO #1, 2 = ELO #2)
+                    \`/server_info\` - Información detallada de un servidor específico
+                    \`/match_info\` - Información de partidos en curso
+                    \`/health\` - Estado de salud del sistema
+                    \`/system_stats\` - Estadísticas del sistema
                     \`/stop_status\` - Detiene auto-actualización en este canal
                     \`/ayuda\` - Mostrar esta guía completa
                     `,
@@ -1114,9 +1134,6 @@ class IOSoccerBot {
 
     // ============= MÉTODOS DE MONITOREO ULTRA-ROBUSTO =============
 
-    /**
-     * 🎮 Comando /server_info - Información de servidores con sistema ultra-robusto
-     */
     async handleServerInfoCommand(interaction) {
         const serverName = interaction.options.getString('servidor');
         
@@ -1175,9 +1192,6 @@ class IOSoccerBot {
         }
     }
 
-    /**
-     * ⚽ Comando /match_info - Información de partidos con JSON ultra-robusto
-     */
     async handleMatchInfoCommand(interaction) {
         const serverName = interaction.options.getString('servidor');
         
@@ -1202,7 +1216,6 @@ class IOSoccerBot {
             let hasActiveMatches = false;
                 
             for (const server of serversToQuery) {
-                // Primero verificar si hay jugadores
                 const serverInfo = await monitoring.queryServerInfo(server);
                 
                 if (!serverInfo.success || serverInfo.data.players === 0) {
@@ -1214,7 +1227,6 @@ class IOSoccerBot {
                     continue;
                 }
                 
-                // Si hay jugadores, obtener info del partido
                 const result = await monitoring.queryMatchInfo(server, server.rcon_password);
                 
                 if (result.success) {
@@ -1259,9 +1271,6 @@ class IOSoccerBot {
         }
     }
 
-    /**
-     * 🏥 Comando /health - Estado de salud del sistema ultra-robusto
-     */
     async handleHealthCommand(interaction) {
         try {
             const healthCheck = await monitoring.runIntegrityCheck();
@@ -1272,12 +1281,10 @@ class IOSoccerBot {
                 .setColor(isHealthy ? '#00ff00' : '#ff9900')
                 .setTimestamp();
                 
-            // Estado general
             embed.setDescription(isHealthy 
                 ? '✅ **SISTEMA ULTRA-ROBUSTO**: Todos los subsistemas funcionan perfectamente' 
                 : '⚠️ **SISTEMA ULTRA-ROBUSTO**: Algunos subsistemas en modo de auto-recuperación');
             
-            // Detalles por sistema
             Object.entries(healthCheck).forEach(([system, check]) => {
                 embed.addFields({
                     name: `${check.healthy ? '✅' : '🔧'} ${system.charAt(0).toUpperCase() + system.slice(1)}`,
@@ -1286,7 +1293,6 @@ class IOSoccerBot {
                 });
             });
             
-            // Información adicional del sistema
             embed.addFields({
                 name: '🛡️ Características Ultra-Robustas Activas',
                 value: [
@@ -1310,9 +1316,6 @@ class IOSoccerBot {
         }
     }
 
-    /**
-     * 📈 Comando /system_stats - Estadísticas completas del sistema
-     */
     async handleSystemStatsCommand(interaction) {
         await interaction.deferReply();
         
@@ -1324,7 +1327,6 @@ class IOSoccerBot {
                 .setColor('#0099ff')
                 .setTimestamp();
                 
-            // Información general
             embed.addFields({
                 name: '🤖 Bot Ultra-Robusto',
                 value: [
@@ -1336,7 +1338,6 @@ class IOSoccerBot {
                 inline: true
             });
             
-            // Estado de subsistemas
             const healthySystems = Object.values(stats.systemHealth).filter(s => s).length;
             const totalSystems = Object.keys(stats.systemHealth).length;
             
@@ -1351,7 +1352,6 @@ class IOSoccerBot {
                 inline: true
             });
             
-            // Rendimiento
             if (stats.performance) {
                 embed.addFields({
                     name: '⚡ Rendimiento Ultra-Optimizado',
@@ -1365,7 +1365,6 @@ class IOSoccerBot {
                 });
             }
             
-            // Información de configuración
             embed.addFields({
                 name: '⚙️ Configuración Ultra-Robusta',
                 value: [
@@ -1388,19 +1387,20 @@ class IOSoccerBot {
         }
     }
 
-    /**
-     * Estado de todos los servidores con información detallada ULTRA PERSISTENTE
-     * @param {import('discord.js').CommandInteraction} interaction 
-     */
     async serverStatus(interaction) {
         const autoUpdate = interaction.options.getBoolean('auto_update') || false;
         
-        // Verificar si ya hay auto-update activo en este canal
+        // Limpiar auto-update existente
         if (this.activeStatusChannels.has(interaction.channel.id)) {
-            // Cancelar el auto-update existente
             const existing = this.activeStatusChannels.get(interaction.channel.id);
             if (existing.intervals) {
-                existing.intervals.forEach(interval => clearInterval(interval));
+                existing.intervals.forEach(interval => {
+                    try {
+                        clearInterval(interval);
+                    } catch (e) {
+                        logger('WARNING', `Error limpiando interval: ${e.message}`);
+                    }
+                });
             }
             this.activeStatusChannels.delete(interaction.channel.id);
             logger('INFO', `🔄 Auto-update anterior cancelado para canal ${interaction.channel.id}`);
@@ -1414,22 +1414,22 @@ class IOSoccerBot {
         
         await interaction.reply({ embeds: [loadingEmbed] });
         
-        // Obtener información de todos los servidores con TIMEOUT GENERAL
+        // Obtener información de servidores con timeout de seguridad
         const serversInfo = [];
-        const maxTotalTime = 10 * 60 * 1000; // 10 minutos máximo total
-        const maxTimePerServer = 2 * 60 * 1000; // 2 minutos máximo por servidor
+        const maxTimePerServer = 45000; // 45 segundos máximo por servidor
+        const maxTotalTime = 3 * 60 * 1000; // 3 minutos máximo total
         
         const getAllServersInfo = async () => {
-            for (let i = 0; i < SERVERS.length; i++) {
-                const server = SERVERS[i];
+            for (let i = 0; i < CONFIG.servers.length; i++) {
+                const server = CONFIG.servers[i];
                 
-                // Actualizar mensaje de progreso
+                // Actualizar progreso
                 const progressEmbed = new EmbedBuilder()
                     .setTitle('🔄 Consultando servidores...')
-                    .setDescription(`Analizando ${server.name} (${i+1}/${SERVERS.length}) - MODO PERSISTENTE`)
+                    .setDescription(`Analizando ${server.name} (${i+1}/${CONFIG.servers.length}) - MODO PERSISTENTE`)
                     .addFields({
                         name: '📡 Progreso',
-                        value: '✅ '.repeat(i) + '🔄 ' + '⏳ '.repeat(SERVERS.length - i - 1),
+                        value: '✅ '.repeat(i) + '🔄 ' + '⏳ '.repeat(CONFIG.servers.length - i - 1),
                         inline: false
                     })
                     .setColor(0xffff00);
@@ -1440,7 +1440,7 @@ class IOSoccerBot {
                     logger('WARNING', `⚠️ No se pudo actualizar progreso: ${e.message}`);
                 }
                 
-                // Timeout por servidor individual
+                // Obtener info del servidor con timeout
                 try {
                     const serverInfo = await Promise.race([
                         getServerInfoRobust(server),
@@ -1450,26 +1450,38 @@ class IOSoccerBot {
                     ]);
                     serversInfo.push(serverInfo);
                     
-                    // Log del resultado para debugging
+                    // Log para debugging
                     if (serverInfo.matchInfo) {
-                        logger('INFO', `📊 ${server.name}: ${serverInfo.matchInfo.team_home} ${serverInfo.matchInfo.goals_home}-${serverInfo.matchInfo.goals_away} ${serverInfo.matchInfo.team_away} (${serverInfo.matchInfo.time_display}, ${serverInfo.matchInfo.period})`);
+                        logger('INFO', `📊 ${server.name}: ${serverInfo.matchInfo.team_home} ${serverInfo.matchInfo.goals_home}-${serverInfo.matchInfo.goals_away} ${serverInfo.matchInfo.team_away}`);
                     } else {
                         logger('INFO', `📊 ${server.name}: Sin match info, ${serverInfo.players}/${serverInfo.maxPlayers} jugadores`);
                     }
                 } catch (serverError) {
-                    logger('ERROR', `❌ ${server.name} falló o timeout: ${serverError.message}`);
-                    // Crear ServerInfo de error para este servidor
-                    const { ServerInfo } = require('./monitoring/serverMonitoring');
-                    serversInfo.push(new ServerInfo(
-                        server.name,
-                        serverError.message.includes('Timeout') ? "🕐 Timeout" : "🔴 Error"
-                    ));
+                    logger('ERROR', `❌ ${server.name} falló: ${serverError.message}`);
+                    // Crear ServerInfo de error usando la clase importada
+                    try {
+                        const { ServerInfo } = require('./monitoring/serverMonitoring');
+                        serversInfo.push(new ServerInfo(
+                            server.name,
+                            serverError.message.includes('Timeout') ? "🕐 Timeout" : "🔴 Error"
+                        ));
+                    } catch (importError) {
+                        // Fallback si no se puede importar ServerInfo
+                        serversInfo.push({
+                            name: server.name,
+                            status: serverError.message.includes('Timeout') ? "🕐 Timeout" : "🔴 Error",
+                            players: 0,
+                            maxPlayers: 0,
+                            mapName: "N/A",
+                            matchInfo: null
+                        });
+                    }
                 }
             }
         };
         
         try {
-            // Timeout general para todo el comando
+            // Timeout global para todo el proceso
             await Promise.race([
                 getAllServersInfo(),
                 new Promise((_, reject) => 
@@ -1480,10 +1492,9 @@ class IOSoccerBot {
             if (globalError.message.includes('timeout')) {
                 logger('ERROR', `❌ TIMEOUT GLOBAL del comando /status: ${globalError.message}`);
                 
-                // Si hay timeout global, mostrar lo que tengamos hasta ahora
                 const timeoutEmbed = new EmbedBuilder()
                     .setTitle('⏰ Timeout Global')
-                    .setDescription(`El comando /status tardó demasiado. Mostrando información parcial de ${serversInfo.length}/${SERVERS.length} servidores.`)
+                    .setDescription(`El comando /status tardó demasiado. Mostrando información parcial de ${serversInfo.length}/${CONFIG.servers.length} servidores.`)
                     .setColor(0xff9900);
                 
                 await interaction.editReply({ embeds: [timeoutEmbed] });
@@ -1499,27 +1510,31 @@ class IOSoccerBot {
             // Activar auto-update PERSISTENTE
             statusEmbed.setFooter({ text: `🔄 Auto-actualización PERSISTENTE ACTIVADA | Actualiza cada 90 segundos | ${new Date().toLocaleTimeString()}` });
             
-            // Enviar RESUMEN + DETALLES desde el inicio
+            // Enviar RESUMEN + DETALLES
             await interaction.editReply({ embeds: [statusEmbed] });
             
             // Enviar detalles de cada servidor
             const detailMessages = [];
             for (const serverInfo of serversInfo) {
-                const matchEmbed = createMatchEmbedImproved(serverInfo);
-                const detailMsg = await interaction.followUp({ embeds: [matchEmbed] });
-                detailMessages.push(detailMsg);
+                try {
+                    const matchEmbed = createMatchEmbedImproved(serverInfo);
+                    const detailMsg = await interaction.followUp({ embeds: [matchEmbed] });
+                    detailMessages.push(detailMsg);
+                } catch (e) {
+                    logger('WARNING', `No se pudo enviar detalle para ${serverInfo.name}: ${e.message}`);
+                }
             }
             
-            // Registrar TODOS los mensajes para auto-update
+            // Registrar mensajes para auto-update
             const summaryMessage = await interaction.fetchReply();
             const allMessages = [summaryMessage, ...detailMessages];
             
-            // Iniciar auto-update PERSISTENTE con interval
+            // Iniciar auto-update con interval seguro
             const updateInterval = setInterval(async () => {
                 try {
-                    await this.autoUpdateStatusPersistent(interaction.channel, allMessages);
+                    await this.autoUpdateStatusSafe(interaction.channel, allMessages);
                 } catch (error) {
-                    logger('ERROR', `❌ Error en auto-update PERSISTENTE: ${error}`);
+                    logger('ERROR', `❌ Error en auto-update: ${error.message}`);
                     clearInterval(updateInterval);
                     this.activeStatusChannels.delete(interaction.channel.id);
                 }
@@ -1533,7 +1548,7 @@ class IOSoccerBot {
             
             logger('INFO', `🔄 Auto-update PERSISTENTE INICIADO para canal ${interaction.channel.id} con ${allMessages.length} mensajes`);
             
-            // Enviar mensaje de confirmación
+            // Mensaje de confirmación
             await interaction.followUp({ 
                 content: '✅ **Auto-actualización PERSISTENTE activada!** El status se actualizará cada 90 segundos con conexiones robustas.',
                 ephemeral: true 
@@ -1542,143 +1557,146 @@ class IOSoccerBot {
             // Status normal sin auto-update
             await interaction.editReply({ embeds: [statusEmbed] });
             
-            // Mostrar detalles individuales de cada servidor
+            // Mostrar detalles individuales
             for (const serverInfo of serversInfo) {
-                const matchEmbed = createMatchEmbedImproved(serverInfo);
-                await interaction.followUp({ embeds: [matchEmbed] });
+                try {
+                    const matchEmbed = createMatchEmbedImproved(serverInfo);
+                    await interaction.followUp({ embeds: [matchEmbed] });
+                } catch (e) {
+                    logger('WARNING', `No se pudo mostrar detalle para ${serverInfo.name}: ${e.message}`);
+                }
             }
         }
     }
     
     /**
-     * Función de auto-actualización ULTRA PERSISTENTE con tolerancia a conexiones lentas
-     * @param {import('discord.js').TextChannel} channel 
-     * @param {import('discord.js').Message[]} messages 
+     * Función de auto-actualización SEGURA con manejo de errores mejorado
      */
-    async autoUpdateStatusPersistent(channel, messages) {
-        let updateCount = 0;
+    async autoUpdateStatusSafe(channel, messages) {
+        let updateCount = this.activeStatusChannels.get(channel.id)?.updateCount || 0;
+        updateCount++;
         
-        const performUpdate = async () => {
-            updateCount++;
-            logger('INFO', `🔄 Auto-update PERSISTENTE #${updateCount} ejecutándose para canal ${channel.id}`);
+        // Actualizar contador en el registro del canal
+        if (this.activeStatusChannels.has(channel.id)) {
+            this.activeStatusChannels.get(channel.id).updateCount = updateCount;
+        }
+        
+        logger('INFO', `🔄 Auto-update SEGURO #${updateCount} ejecutándose para canal ${channel.id}`);
+        
+        try {
+            // Mensaje de "actualizando" solo si hay mensajes válidos
+            if (messages.length > 0 && messages[0]) {
+                const updatingEmbed = new EmbedBuilder()
+                    .setTitle('🔄 Actualizando servidores...')
+                    .setDescription(`Actualización #${updateCount} - Obteniendo información PERSISTENTE...`)
+                    .setColor(0xffaa00);
+                
+                try {
+                    await messages[0].edit({ embeds: [updatingEmbed] });
+                } catch (e) {
+                    logger('WARNING', `⚠️ No se pudo editar mensaje de actualización: ${e.message}`);
+                }
+            }
             
-            try {
-                // Mensaje de "actualizando" en el primer mensaje
-                if (messages.length > 0) {
+            // Obtener información actualizada con timeout por servidor
+            const serversInfo = [];
+            const maxTimePerServer = 30000; // 30 segundos máximo por servidor en auto-update
+            
+            for (let i = 0; i < CONFIG.servers.length; i++) {
+                const server = CONFIG.servers[i];
+                logger('INFO', `🔄 Auto-update: procesando ${server.name} (${i+1}/${CONFIG.servers.length})`);
+                
+                // Actualizar mensaje de progreso
+                if (messages.length > 0 && messages[0]) {
                     const updatingEmbed = new EmbedBuilder()
                         .setTitle('🔄 Actualizando servidores...')
-                        .setDescription(`Actualización #${updateCount} - Obteniendo información PERSISTENTE...`)
+                        .setDescription(`Actualización #${updateCount} - Procesando ${server.name} (${i+1}/${CONFIG.servers.length})`)
                         .setColor(0xffaa00);
                     
                     try {
                         await messages[0].edit({ embeds: [updatingEmbed] });
                     } catch (e) {
-                        logger('WARNING', `⚠️ No se pudo editar mensaje de actualización: ${e}`);
+                        // Ignorar errores de edición durante progreso
                     }
                 }
                 
-                // Obtener información actualizada de todos los servidores (PERSISTENTE)
-                const serversInfo = [];
-                for (let i = 0; i < SERVERS.length; i++) {
-                    const server = SERVERS[i];
-                    logger('INFO', `🔄 Auto-update PERSISTENTE: procesando ${server.name} (${i+1}/${SERVERS.length})`);
-                    
-                    // Actualizar mensaje de progreso
-                    if (messages.length > 0) {
-                        const updatingEmbed = new EmbedBuilder()
-                            .setTitle('🔄 Actualizando servidores...')
-                            .setDescription(`Actualización #${updateCount} - Procesando ${server.name} (${i+1}/${SERVERS.length}) - MODO PERSISTENTE`)
-                            .setColor(0xffaa00);
-                        
-                        try {
-                            await messages[0].edit({ embeds: [updatingEmbed] });
-                        } catch (e) {
-                            // Ignorar errores de edición
-                        }
-                    }
-                    
-                    const serverInfo = await getServerInfoRobust(server);
+                try {
+                    const serverInfo = await Promise.race([
+                        getServerInfoRobust(server),
+                        new Promise((_, reject) => 
+                            setTimeout(() => reject(new Error(`Timeout auto-update ${maxTimePerServer/1000}s`)), maxTimePerServer)
+                        )
+                    ]);
                     serversInfo.push(serverInfo);
+                } catch (serverError) {
+                    logger('WARNING', `⚠️ Servidor ${server.name} falló en auto-update: ${serverError.message}`);
+                    // Agregar info de error
+                    try {
+                        const { ServerInfo } = require('./monitoring/serverMonitoring');
+                        serversInfo.push(new ServerInfo(
+                            server.name,
+                            serverError.message.includes('Timeout') ? "🕐 Auto-Update Timeout" : "🔴 Auto-Update Error"
+                        ));
+                    } catch (importError) {
+                        serversInfo.push({
+                            name: server.name,
+                            status: "🔴 Auto-Update Error",
+                            players: 0,
+                            maxPlayers: 0,
+                            mapName: "N/A",
+                            matchInfo: null
+                        });
+                    }
                 }
-                
-                // Actualizar mensaje de resumen (primer mensaje)
-                if (messages.length > 0) {
+            }
+            
+            // Actualizar mensaje de resumen
+            if (messages.length > 0 && messages[0]) {
+                try {
                     const statusEmbed = createStatusEmbed(serversInfo);
                     statusEmbed.setFooter({ text: `🔄 Auto-actualización PERSISTENTE #${updateCount} | Próxima actualización en 90s | ${new Date().toLocaleTimeString()}` });
                     
-                    try {
-                        await messages[0].edit({ embeds: [statusEmbed] });
-                    } catch (error) {
-                        logger('ERROR', `❌ Error actualizando resumen: ${error}`);
-                    }
+                    await messages[0].edit({ embeds: [statusEmbed] });
+                } catch (error) {
+                    logger('ERROR', `❌ Error actualizando resumen: ${error.message}`);
                 }
-                
-                // Actualizar mensajes de detalles (resto de mensajes)
-                for (let i = 0; i < serversInfo.length; i++) {
-                    if (i + 1 < messages.length) { // +1 porque el primer mensaje es el resumen
-                        const matchEmbed = createMatchEmbedImproved(serversInfo[i]);
-                        try {
-                            await messages[i + 1].edit({ embeds: [matchEmbed] });
-                        } catch (error) {
-                            logger('ERROR', `❌ Error actualizando detalle ${serversInfo[i].name}: ${error}`);
-                        }
-                    }
-                }
-                
-                logger('INFO', `✅ Auto-update PERSISTENTE #${updateCount} completado para canal ${channel.id}`);
-            } catch (error) {
-                logger('ERROR', `❌ Error fatal en auto-update PERSISTENTE #${updateCount}: ${error}`);
             }
-        };
-        
-        // Ejecutar la primera actualización inmediatamente
-        await performUpdate();
-    }
-    
-    /**
-     * Función de auto-actualización regular (compatibilidad)
-     * @param {import('discord.js').TextChannel} channel 
-     * @param {import('discord.js').Message[]} messages 
-     */
-    async autoUpdateStatus(channel, messages) {
-        // Delegar a la versión persistente para mantener compatibilidad
-        return await this.autoUpdateStatusPersistent(channel, messages);
-    }
-    
-    /**
-     * Información detallada de un servidor específico
-     * @param {import('discord.js').CommandInteraction} interaction 
-     */
-    async individualServer(interaction) {
-        const serverNum = interaction.options.getInteger('numero');
-        
-        if (serverNum < 1 || serverNum > SERVERS.length) {
-            const embed = new EmbedBuilder()
-                .setColor('#e74c3c')
-                .setTitle('❌ Servidor Inválido')
-                .setDescription(`Servidor inválido. Usa 1-${SERVERS.length}`);
-            return interaction.reply({ embeds: [embed] });
+            
+            // Actualizar mensajes de detalles
+            for (let i = 0; i < serversInfo.length; i++) {
+                if (i + 1 < messages.length && messages[i + 1]) {
+                    try {
+                        const matchEmbed = createMatchEmbedImproved(serversInfo[i]);
+                        await messages[i + 1].edit({ embeds: [matchEmbed] });
+                    } catch (error) {
+                        logger('WARNING', `⚠️ Error actualizando detalle ${serversInfo[i].name}: ${error.message}`);
+                    }
+                }
+            }
+            
+            logger('INFO', `✅ Auto-update PERSISTENTE #${updateCount} completado para canal ${channel.id}`);
+            
+        } catch (error) {
+            logger('ERROR', `❌ Error fatal en auto-update #${updateCount}: ${error.message}`);
+            
+            // En caso de error fatal, limpiar el auto-update
+            if (this.activeStatusChannels.has(channel.id)) {
+                const channelData = this.activeStatusChannels.get(channel.id);
+                if (channelData.intervals) {
+                    channelData.intervals.forEach(interval => {
+                        try {
+                            clearInterval(interval);
+                        } catch (e) {
+                            logger('WARNING', `Error limpiando interval después de error fatal: ${e.message}`);
+                        }
+                    });
+                }
+                this.activeStatusChannels.delete(channel.id);
+                logger('INFO', `🛑 Auto-update cancelado debido a error fatal en canal ${channel.id}`);
+            }
         }
-        
-        const server = SERVERS[serverNum - 1];
-        
-        const loadingEmbed = new EmbedBuilder()
-            .setTitle(`🔄 Consultando ${server.name}...`)
-            .setDescription('Obteniendo información detallada')
-            .setColor(0xffff00);
-        
-        await interaction.reply({ embeds: [loadingEmbed] });
-        
-        const serverInfo = await getServerInfoRobust(server);
-        const matchEmbed = createMatchEmbedImproved(serverInfo);
-        
-        await interaction.editReply({ embeds: [matchEmbed] });
     }
-    
-    /**
-     * Detiene la actualización automática del status en este canal
-     * @param {import('discord.js').CommandInteraction} interaction 
-     */
+
     async stopAutoStatus(interaction) {
         if (!this.activeStatusChannels.has(interaction.channel.id)) {
             const embed = new EmbedBuilder()
@@ -1688,10 +1706,16 @@ class IOSoccerBot {
             return interaction.reply({ embeds: [embed], ephemeral: true });
         }
         
-        // Cancelar los intervals
+        // Cancelar los intervals de forma segura
         const channelData = this.activeStatusChannels.get(interaction.channel.id);
         if (channelData.intervals) {
-            channelData.intervals.forEach(interval => clearInterval(interval));
+            channelData.intervals.forEach(interval => {
+                try {
+                    clearInterval(interval);
+                } catch (e) {
+                    logger('WARNING', `Error limpiando interval en stop: ${e.message}`);
+                }
+            });
         }
         
         // Limpiar registro
@@ -1777,7 +1801,7 @@ class IOSoccerBot {
                 return JSON.parse(data);
             }
         } catch (error) {
-            console.error('Error al cargar partidos:', error);
+            logger('ERROR', `Error al cargar partidos: ${error.message}`);
         }
         return [];
     }
@@ -1786,7 +1810,7 @@ class IOSoccerBot {
         try {
             fs.writeFileSync(this.dataFile, JSON.stringify(this.matches, null, 2));
         } catch (error) {
-            console.error('Error al guardar partidos:', error);
+            logger('ERROR', `Error al guardar partidos: ${error.message}`);
         }
     }
 }
@@ -1826,6 +1850,20 @@ async function initializeBot() {
                     await monitoring.shutdown();
                 }
                 
+                // Limpiar todos los intervals activos
+                bot.activeStatusChannels.forEach((channelData, channelId) => {
+                    if (channelData.intervals) {
+                        channelData.intervals.forEach(interval => {
+                            try {
+                                clearInterval(interval);
+                            } catch (e) {
+                                console.error(`Error limpiando interval para canal ${channelId}:`, e.message);
+                            }
+                        });
+                    }
+                });
+                bot.activeStatusChannels.clear();
+                
                 if (bot && bot.client) {
                     bot.client.destroy();
                 }
@@ -1849,15 +1887,23 @@ async function initializeBot() {
     }
 }
 
-// Manejo de errores ultra-robusto
+// Manejo de errores ultra-robusto con logger seguro
 process.on('unhandledRejection', error => {
     console.error('❌ Unhandled promise rejection en sistema ultra-robusto:', error);
-    logger('ERROR', `Unhandled rejection: ${error.message}`);
+    try {
+        logger('ERROR', `Unhandled rejection: ${error.message}`);
+    } catch (loggerError) {
+        console.error('Error adicional en logger durante unhandled rejection:', loggerError.message);
+    }
 });
 
 process.on('uncaughtException', error => {
     console.error('❌ Uncaught exception en sistema ultra-robusto:', error);
-    logger('ERROR', `Uncaught exception: ${error.message}`);
+    try {
+        logger('ERROR', `Uncaught exception: ${error.message}`);
+    } catch (loggerError) {
+        console.error('Error adicional en logger durante uncaught exception:', loggerError.message);
+    }
 });
 
 // Inicializar el bot ultra-robusto
