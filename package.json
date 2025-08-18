@@ -1,10 +1,10 @@
 {
   "name": "bilarbot-warp",
-  "version": "1.0.0",
-  "description": "Bot IOSoccer para Discord con monitoreo de servidores y confirmación de partidos",
-  "main": "bot-railway.js",
+  "version": "2.0.0",
+  "description": "Bot IOSoccer Ultra-Robusto para Discord con sistema de calendario, monitoreo enterprise y confirmación de partidos",
+  "main": "bot.js",
   "scripts": {
-    "start": "node bot-railway.js",
+    "start": "node bot.js",
     "dev": "node bot.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
